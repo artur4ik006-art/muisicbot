@@ -1,4 +1,4 @@
-\import os
+import os
 import re
 import telebot
 from yt_dlp import YoutubeDL
@@ -28,37 +28,39 @@ def download_audio(url_or_search):
             'preferredquality': '192',
         }],
         'quiet': True,
-        # Повне маскування запитів для SoundCloud/інших джерел
+        # Використовуємо виключно імітацію офіційного Android-додатка YouTube Music
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android_music'],
+                'player_skip': ['webpage', 'configs']
+            }
+        },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'com.google.android.apps.youtube.music/6.31.55 (Linux; U; Android 11; uk_UA; G3112 Build/48.1.A.2.112)',
             'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Language': 'uk-UA,uk;q=0.9,en-US;q=0.8',
         }
     }
     
-    # Вирізаємо назву з посилання Shazam
     if "shazam.com" in url_or_search:
         clean_url = url_or_search.split('?')
         match = re.search(r'/track/\d+/([^/]+)', clean_url[0])
         if match:
-            # Наприклад: "my moon my man"
+            # Очищаємо назву треку (наприклад: з "my-moon-my-man" робимо "my moon my man")
             keywords = match.group(1).replace('-', ' ')
-            # Використовуємо стабільний пошук SoundCloud без API ключів за допомогою прямого кодування
-            url_to_download = f"scsearch1:{keywords}"
+            url_to_download = f"ytsearch1:{keywords} audio"
         else:
-            raise Exception("Не вдалося розпізнати посилання Shazam.")
+            raise Exception("Не вдалося розпізнати структуру посилання Shazam.")
     else:
         url_to_download = url_or_search
 
     with YoutubeDL(ydl_opts) as ydl:
-        # Спочатку отримуємо інформацію про трек без глибокого аналізу
         info = ydl.extract_info(url_to_download, download=True)
-        
         if 'entries' in info:
-            if info['entries'] and info['entries'][0]:
+            if info['entries']:
                 info = info['entries'][0]
             else:
-                raise Exception("Не вдалося знайти вільний аудіопотік у мережі.")
+                raise Exception("Нічого не знайдено за назвою треку.")
         
         filename = ydl.prepare_filename(info)
         mp3_filename = os.path.splitext(filename)[0] + '.mp3'
@@ -66,7 +68,7 @@ def download_audio(url_or_search):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привіт! Скинь мені посилання на трек із Shazam, і я завантажу його для тебе!")
+    bot.reply_to(message, "Привіт! Скинь мені посилання на трек із Shazam чи YouTube, і я завантажу його для тебе як MP3!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_link(message):
@@ -74,8 +76,8 @@ def handle_link(message):
     urls = re.findall(r'(https?://\S+)', text)
     
     if urls:
-        # Критичне виправлення: дістаємо перший елемент списку як звичайний текстовий рядок
-        clean_url = str(urls[0]) 
+        # КРИТИЧНЕ ВИПРАВЛЕННЯ: беремо перший елемент масиву як чистий рядок БЕЗ дужок і лапок
+        clean_url = urls[0] 
         status_message = bot.reply_to(message, "🔍 Шукаю та нарізаю трек, зачекай трішки...")
         try:
             file_path = download_audio(clean_url)
@@ -86,7 +88,7 @@ def handle_link(message):
                 bot.delete_message(message.chat.id, status_message.message_id)
                 os.remove(file_path)
             else:
-                raise Exception("Помилка створення аудіофайлу.")
+                raise Exception("Помилка створення MP3 файлу на сервері.")
                 
         except Exception as e:
             bot.edit_message_text(f"❌ Помилка завантаження: {str(e)}", message.chat.id, status_message.message_id)
@@ -95,5 +97,5 @@ def handle_link(message):
 
 if __name__ == '__main__':
     Thread(target=run_web).start()
-    print("Бот успішно перезапущений з виправленим парсером рядків...")
+    print("Бот успішно перезапущений з виправленим чистим URL...")
     bot.infinity_polling()
