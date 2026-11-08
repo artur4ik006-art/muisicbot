@@ -9,7 +9,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Мульти-пошукова система активована!"
+    return "Мульти-пошукова музична система активна!"
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -19,7 +19,7 @@ BOT_TOKEN = '9019116927:AAGKjHLRDNEp-BpmZaUqfF1pIBTiBsL3YyI'
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
 def download_audio(keywords):
-    # Опція 1: Пошук на SoundCloud (Обходить капчі YouTube)
+    # Джерело 1: Вільно завантажуваний SoundCloud
     ydl_opts_sc = {
         'format': 'bestaudio/best',
         'outtmpl': '/tmp/%(title)s.%(ext)s',  
@@ -31,7 +31,7 @@ def download_audio(keywords):
         'quiet': True
     }
 
-    # Опція 2: Резерв через YouTube Music (Клієнт веб-плеєра)
+    # Джерело 2: Мобільний API YouTube Music (імітація офіційного додатка)
     ydl_opts_yt_music = {
         'format': 'bestaudio/best',
         'outtmpl': '/tmp/%(title)s.%(ext)s',  
@@ -41,10 +41,15 @@ def download_audio(keywords):
             'preferredquality': '192',
         }],
         'quiet': True,
-        'extractor_args': {'youtube': {'player_client': ['webpage']}}
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android_music'],
+                'player_skip': ['webpage', 'configs']
+            }
+        }
     }
 
-    # Опція 3: Потужний супер-обхід (Імітація Smart TV додатка YouTube)
+    # Джерело 3: Smart TV Інфраструктура (YouTube для телевізорів ніколи не просить капчу)
     ydl_opts_tv = {
         'format': 'bestaudio/best',
         'outtmpl': '/tmp/%(title)s.%(ext)s',  
@@ -62,43 +67,42 @@ def download_audio(keywords):
         }
     }
 
-    #--- РОТАЦІЙНИЙ МУЛЬТИ-ПОШУК ---
-    
-    # Спроба 1: SoundCloud
+    # Почерговий каскадний пошук
+    # 1. Пробуємо завантажити вільну копію з SoundCloud
     try:
-        print(f"Спроба 1: Шукаю '{keywords}' на SoundCloud...")
+        print(f"Спроба 1: Пошук '{keywords}' на SoundCloud...")
         with YoutubeDL(ydl_opts_sc) as ydl:
             info = ydl.extract_info(f"scsearch1:{keywords}", download=True)
             if 'entries' in info and info['entries']:
                 filename = ydl.prepare_filename(info['entries'][0])
-                return os.path.splitext(filename) + '.mp3'
+                return os.path.splitext(filename)[0] + '.mp3'
     except Exception as e:
-        print(f"SoundCloud не знайшов або DRM блок: {e}")
+        print(f"SoundCloud недоступний або DRM: {e}")
 
-    # Спроба 2: YouTube Music
+    # 2. Переключаємось на YouTube Music через мобільний додаток
     try:
-        print(f"Спроба 2: Переключаюсь на YouTube Music для '{keywords}'...")
+        print(f"Спроба 2: Пошук '{keywords}' через YouTube Music API...")
         with YoutubeDL(ydl_opts_yt_music) as ydl:
             info = ydl.extract_info(f"ytsearch1:{keywords} audio", download=True)
             if 'entries' in info and info['entries']:
                 filename = ydl.prepare_filename(info['entries'][0])
-                return os.path.splitext(filename) + '.mp3'
+                return os.path.splitext(filename)[0] + '.mp3'
     except Exception as e:
-        print(f"YouTube Music видав помилку: {e}")
+        print(f"YouTube Music заблоковано: {e}")
 
-    # Спроба 3: Надійний обхід через Smart TV Інфраструктуру
-    print(f"Спроба 3: Запуск супер-обходу TV-Embedded для '{keywords}'...")
+    # 3. Фінальний пробій блокувань через Smart TV клієнт
+    print(f"Спроба 3: Запуск фінального Smart TV обходу для '{keywords}'...")
     with YoutubeDL(ydl_opts_tv) as ydl:
         info = ydl.extract_info(f"ytsearch1:{keywords} lyrics", download=True)
         if 'entries' in info and info['entries']:
             filename = ydl.prepare_filename(info['entries'][0])
-            return os.path.splitext(filename) + '.mp3'
+            return os.path.splitext(filename)[0] + '.mp3'
         else:
-            raise Exception("Жодна пошукова система (SoundCloud/YouTube/TV) не змогла отримати цей трек.")
+            raise Exception("Жодна музична база не змогла надати цей трек.")
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привіт! Надішли мені посилання на трек із Shazam, і моя розумна мульти-система знайде його!")
+    bot.reply_to(message, "Привіт! Надішли мені лінк на Shazam, і мій інтелектуальний мульти-пошук знайде цей трек!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_link(message):
@@ -106,12 +110,12 @@ def handle_link(message):
     urls = re.findall(r'(https?://\S+)', text)
     
     if urls:
-        # КРИТИЧНЕ ВИПРАВЛЕННЯ: urls[0] бере суто рядок тексту без квадратних дужок масиву
+        # СУВОРЕ ВИПРАВЛЕННЯ: Беремо перший елемент списку як ТЕКСТОВИЙ РЯДОК (String)
         raw_url = urls[0] 
-        status_message = bot.reply_to(message, "🔍 Працює мульти-пошук. Перевіряю бази даних...")
+        status_message = bot.reply_to(message, "🔍 Працює мультиплатформенна ротація. Шукаю трек...")
         
         try:
-            # Вирізаємо чистий текст треку з лінка Shazam
+            # Витягуємо чисту назву треку з тексту URL
             clean_url = raw_url.split('?')
             match = re.search(r'/track/\d+/([^/]+)', clean_url[0])
             if match:
@@ -127,14 +131,14 @@ def handle_link(message):
                 bot.delete_message(message.chat.id, status_message.message_id)
                 os.remove(file_path)
             else:
-                raise Exception("Помилка фіналізації медіафайлу.")
+                raise Exception("Помилка фіналізації MP3 на хмарному сервері.")
                 
         except Exception as e:
-            bot.edit_message_text(f"❌ Помилка: {str(e)}", message.chat.id, status_message.message_id)
+            bot.edit_message_text(f"❌ Помилка завантаження: {str(e)}", message.chat.id, status_message.message_id)
     else:
-        bot.reply_to(message, "Будь ласка, надішли мені повідомлення, яке містить інтернет-посилання.")
+        bot.reply_to(message, "Будь ласка, надішли мені коректне інтернет-посилання.")
 
 if __name__ == '__main__':
     Thread(target=run_web).start()
-    print("Розумний мульти-бот успішно запущений...")
+    print("Мульти-бот успішно активовано...")
     bot.infinity_polling()
