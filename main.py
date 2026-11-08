@@ -28,51 +28,54 @@ def download_audio(url_or_search):
             'preferredquality': '192',
         }],
         'quiet': True,
+        # Зміна клієнта YouTube на mweb/webpage для обходу вікна "Sign in to confirm you're not a bot"
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['webpage', 'mweb']
+            }
+        },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
         }
     }
     
-    # Обробка посилань на Shazam
+    # Витягуємо назву з Shazam, якщо це посилання на нього
     if "shazam.com" in url_or_search:
         shazam_opts = {
             'quiet': True,
             'skip_download': True,
             'http_headers': ydl_opts['http_headers']
         }
+        search_query = url_or_search
         with YoutubeDL(shazam_opts) as ydl:
             try:
                 info = ydl.extract_info(url_or_search, download=False)
                 title = info.get('title')
                 artist = info.get('artist') or info.get('creator')
                 if title and artist:
-                    # Шукаємо на SoundCloud замість YouTube для обходу захисту від ботів
-                    search_query = f"scsearch:{artist} - {title}"
+                    # Шукаємо на YouTube за допомогою альтернативного клієнта
+                    search_query = f"ytsearch1:{artist} - {title}"
                 elif title:
-                    search_query = f"scsearch:{title}"
-                else:
-                    search_query = url_or_search
+                    search_query = f"ytsearch1:{title}"
             except Exception:
-                clean_url = url_or_search.split('?')
-                match = re.search(r'/track/\d+/([^/]+)', clean_url[0])
+                # Резервний варіант: витягуємо слова з самого посилання
+                clean_url = url_or_search.split('?')[0]
+                match = re.search(r'/track/\d+/([^/]+)', clean_url)
                 if match:
-                    search_query = f"scsearch:{match.group(1).replace('-', ' ')}"
-                else:
-                    search_query = url_or_search
+                    search_query = f"ytsearch1:{match.group(1).replace('-', ' ')}"
         
         url_to_download = search_query
     else:
-        # Якщо користувач скинув пряме посилання (наприклад, SoundCloud/YouTube), 
-        # спочатку пробуємо завантажити його безпосередньо.
+        # Якщо це звичайне посилання, пробуємо завантажити за ним
         url_to_download = url_or_search
 
-    # Завантаження треку
+    # Запуск завантаження
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url_to_download, download=True)
         if 'entries' in info:
-            info = info['entries'][0]  # Беремо перший знайдений результат пошуку
+            info = info['entries'][0]
         filename = ydl.prepare_filename(info)
         return os.path.splitext(filename)[0] + '.mp3'
 
@@ -86,7 +89,7 @@ def handle_link(message):
     
     urls = re.findall(r'(https?://\S+)', text)
     if urls:
-        url = urls[0]
+        url = urls[0]  # Беремо саме перший рядок-посилання, а не весь список
         status_message = bot.reply_to(message, "🔍 Шукаю та завантажую трек, зачекай трішки...")
         try:
             file_path = download_audio(url)
@@ -101,6 +104,5 @@ def handle_link(message):
 
 if __name__ == '__main__':
     Thread(target=run_web).start()
-    print("Бот успішно запущений з пошуком через SoundCloud...")
+    print("Бот успішно оновлений з клієнтом webpage...")
     bot.infinity_polling()
-
