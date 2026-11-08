@@ -1,15 +1,28 @@
 import os
 import telebot
 from yt_dlp import YoutubeDL
+from threading import Thread
+from flask import Flask
 
-# Ваш токен вже вшитий у код для надійності
+# Створюємо міні-вебсайт, щоб Render думав, що це звичайна сторінка
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Бот працює!"
+
+def run_web():
+    # Запускаємо веб-сервер на порті, який вимагає Render
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# Ваш токен
 BOT_TOKEN = '9019116927:AAGKjHLRDNEp-BpmZaUqfF1pIBTiBsL3YyI'
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
 def download_audio(url):
     ydl_opts = {
         'format': 'bestaudio/best',
-        # На Render файли безпечно писати у тимчасову папку /tmp
         'outtmpl': '/tmp/%(title)s.%(ext)s',  
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -18,12 +31,10 @@ def download_audio(url):
         }],
         'quiet': True  
     }
-    
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
-        mp3_filename = os.path.splitext(filename)[0] + '.mp3'
-        return mp3_filename
+        return os.path.splitext(filename) + '.mp3'
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -41,11 +52,12 @@ def handle_link(message):
             bot.delete_message(message.chat.id, status_message.message_id)
             os.remove(file_path)
         except Exception as e:
-            bot.edit_message_text(f"❌ Не вдалося завантажити трек. Ошибка: {str(e)}", 
-                                  message.chat.id, status_message.message_id)
+            bot.edit_message_text(f"❌ Помилка завантаження: {str(e)}", message.chat.id, status_message.message_id)
     else:
         bot.reply_to(message, "Будь ласка, надішли мені коректне інтернет-посилання.")
 
 if __name__ == '__main__':
-    print("Бот успішно запущений...")
+    # Запускаємо веб-сервер у фоні для обходу обмежень Render
+    Thread(target=run_web).start()
+    print("Бот успішно запущенний на безкоштовному тарифі...")
     bot.infinity_polling()
