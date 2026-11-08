@@ -28,22 +28,28 @@ def download_audio(url_or_search):
             'preferredquality': '192',
         }],
         'quiet': True,
+        # Пропускаємо системні конфіги клієнта YouTube, які викликають капчу
+        'extractor_args': {
+            'youtube': {
+                'player_skip': ['configs', 'webpage'],
+                'player_client': ['android', 'mweb']
+            }
+        },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'uk-UA,uk;q=0.9,en-US;q=0.8',
         }
     }
     
-    # Розумне розпізнавання тексту з посилання Shazam без звернення до його заблокованого сайту
     if "shazam.com" in url_or_search:
         clean_url = url_or_search.split('?')
         match = re.search(r'/track/\d+/([^/]+)', clean_url[0])
         if match:
-            # Перетворюємо фрагмент посилання на чистий текст (наприклад: "my moon my man")
+            # Перетворюємо шлях тексту на пошукову фразу (наприклад: "my moon my man")
             keywords = match.group(1).replace('-', ' ')
-            # Використовуємо SoundCloud без API клієнта, що гарантує 100% скачування без капчі
-            url_to_download = f"scsearch1:{keywords}"
+            # Шукаємо перше ліпше відео на YouTube (зазвичай це неофіційні перезавантаження, де немає DRM-захисту)
+            url_to_download = f"ytsearch1:{keywords} lyrics"
         else:
             raise Exception("Не вдалося розпізнати посилання Shazam.")
     else:
@@ -55,14 +61,14 @@ def download_audio(url_or_search):
             if info['entries']:
                 info = info['entries'][0]
             else:
-                raise Exception("Не вдалося знайти аудіофайл на серверах.")
+                raise Exception("Аудіофайл не знайдено.")
         
         filename = ydl.prepare_filename(info)
         return os.path.splitext(filename)[0] + '.mp3'
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привіт! Надішли мені посилання на трек із Shazam, і я завантажу його для тебе!")
+    bot.reply_to(message, "Привіт! Скинь мені посилання на трек із Shazam, і я завантажу його для тебе!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_link(message):
@@ -70,7 +76,7 @@ def handle_link(message):
     urls = re.findall(r'(https?://\S+)', text)
     
     if urls:
-        clean_url = urls[0] # Виправлено: передаємо рядок
+        clean_url = urls[0] # Чітко передаємо перший рядок-посилання
         status_message = bot.reply_to(message, "🔍 Шукаю та нарізаю трек, зачекай трішки...")
         try:
             file_path = download_audio(clean_url)
@@ -81,7 +87,7 @@ def handle_link(message):
                 bot.delete_message(message.chat.id, status_message.message_id)
                 os.remove(file_path)
             else:
-                raise Exception("Помилка обробки MP3 файлу.")
+                raise Exception("Помилка обробки файлу на сервері.")
                 
         except Exception as e:
             bot.edit_message_text(f"❌ Помилка завантаження: {str(e)}", message.chat.id, status_message.message_id)
@@ -90,5 +96,5 @@ def handle_link(message):
 
 if __name__ == '__main__':
     Thread(target=run_web).start()
-    print("Бот запущений у стабільному режимі...")
+    print("Бот запущений у стабільному мобільному режимі пошуку...")
     bot.infinity_polling()
