@@ -32,7 +32,7 @@ def inject_metadata(file_path, title, artist):
         
         img_data = None
         if res.get('results') and res['results']:
-            img_url = res['results'][0]['artworkUrl100'].replace('100x100bb', '600x600bb')
+            img_url = res['results']['artworkUrl100'].replace('100x100bb', '600x600bb')
             img_data = requests.get(img_url, timeout=5).content
 
         audio = MP3(file_path, ID3=ID3)
@@ -80,7 +80,6 @@ def download_track(query):
         filename = ydl.prepare_filename(info)
         file_path = os.path.splitext(filename)[0] + '.mp3'
         
-        # Красиве розділення тексту на автора та пісню
         if '-' in query:
             parts = query.split('-', 1)
             artist = parts[0].strip()
@@ -102,11 +101,11 @@ def handle_message(message):
     urls = re.findall(r'(https?://\S+)', text)
     
     if urls:
-        clean_url = urls[0] # Виправлено: беремо строго текстовий рядок з масиву
+        clean_url = urls[0]
         if "shazam.com" in clean_url:
             try:
-                clean_url_parts = clean_url.split('?')
-                match = re.search(r'/track/\d+/([^/]+)', clean_url_parts[0])
+                clean_url_parts = clean_url.split('?')[0]
+                match = re.search(r'/track/\d+/([^/]+)', clean_url_parts)
                 if match:
                     keywords = match.group(1).replace('-', ' ')
                 else:
@@ -120,7 +119,6 @@ def handle_message(message):
 
     user_requests[message.chat.id] = keywords
 
-    # Компактне та повністю робоче меню
     markup = types.InlineKeyboardMarkup(row_width=1)
     btn_sc = types.InlineKeyboardButton("🎵 Завантажити музику (SoundCloud)", callback_data="get_sc")
     btn_lyrics = types.InlineKeyboardButton("📝 Текст пісні (Lyrics)", callback_data="get_lyrics")
@@ -138,7 +136,7 @@ def callback_inline(call):
         bot.answer_callback_query(call.id, "❌ Запит застарів. Надішли назву знову.")
         return
 
-    # 📝 Повністю виправлений модуль тексту пісень (Додано слеш "/")
+    # 📝 Повністю виправлений модуль тексту пісень (ДОДАНО СЛЕШ "/")
     if call.data == "get_lyrics":
         bot.answer_callback_query(call.id, "🔍 Пошук тексту...")
         status = bot.send_message(chat_id, "⏳ Опитую відкриті бази текстів пісень...")
@@ -147,10 +145,11 @@ def callback_inline(call):
                 parts = query.split('-', 1)
                 artist_part = parts[0].strip().replace(' ', '%20')
                 title_part = parts[1].strip().replace(' ', '%20')
-                # Додано обов'язковий слеш "/" між доменом і автором
+                # Додано "/" одразу після .ovh
                 lyrics_url = f"https://lyrics.ovh{artist_part}/{title_part}"
             else:
                 title_part = query.strip().replace(' ', '%20')
+                # Додано "/" одразу після .ovh
                 lyrics_url = f"https://lyrics.ovhUnknown%20Artist/{title_part}"
             
             res = requests.get(lyrics_url, timeout=5).json()
