@@ -23,7 +23,6 @@ bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 user_requests = {}
 
 def download_track(query, source_type):
-    # Динамічне налаштування залежно від вибору користувача
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': '/tmp/%(title)s.%(ext)s',  
@@ -62,10 +61,14 @@ def handle_message(message):
     
     # Визначаємо ключові слова для пошуку
     if urls:
-        clean_url = urls[0]  # Виправлено: беремо суто ПЕРШИЙ рядок тексту зі списку
-        match = re.search(r'/track/\d+/([^/]+)', clean_url.split('?')[0])
-        if match:
-            keywords = match.group(1).replace('-', ' ')
+        clean_url = urls[0]  # Виправлено: беремо перший рядок зі списку
+        if "shazam.com" in clean_url:
+            clean_url_parts = clean_url.split('?')
+            match = re.search(r'/track/\d+/([^/]+)', clean_url_parts[0])
+            if match:
+                keywords = match.group(1).replace('-', ' ')
+            else:
+                keywords = clean_url
         else:
             keywords = clean_url
     else:
@@ -86,8 +89,8 @@ def handle_message(message):
     bot.send_message(message.chat.id, f"🔍 Я розпізнав трек: *{keywords}*\nОбери дію або джерело завантаження:", 
                      parse_mode="Markdown", reply_markup=markup)
 
-# Обробник натискання кнопок
-@types.callback_query_handler(func=lambda call: True)
+# Обробник натискання кнопок (Виправлено декоратор)
+@bot.callback_query_handler(func=lambda call: True)
 def callback_inline(call):
     chat_id = call.message.chat.id
     query = user_requests.get(chat_id)
@@ -98,7 +101,7 @@ def callback_inline(call):
 
     if call.data == "get_lyrics":
         bot.answer_callback_query(call.id, "Функція розробляється!")
-        bot.send_message(chat_id, f"📖 Шукаю текст для *{query}*... Наразі модуль Lyrics підключається.")
+        bot.send_message(chat_id, f"📖 Модуль Lyrics для *{query}* наразі підключається.")
         return
 
     # Мапа вибору джерел
@@ -106,7 +109,7 @@ def callback_inline(call):
     source_type = source_map.get(call.data)
 
     bot.answer_callback_query(call.id, "⏳ Починаю обробку запиту...")
-    status_message = bot.send_message(chat_id, "📥 Завантажую аудіопотік за обраним сценаріем...")
+    status_message = bot.send_message(chat_id, "📥 Завантажую аудіопотік за обраним сценарієм...")
 
     try:
         file_path = download_track(query, source_type)
