@@ -9,7 +9,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Бот працює стабільно та надійно!"
+    return "Бот працює надійно!"
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -18,8 +18,9 @@ def run_web():
 BOT_TOKEN = '9019116927:AAGKjHLRDNEp-BpmZaUqfF1pIBTiBsL3YyI'
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
-def download_audio(url_or_search):
-    ydl_opts = {
+def download_audio(url_string):
+    # Налаштування 1: Спроба через SoundCloud (швидко і без капчі)
+    ydl_opts_sc = {
         'format': 'bestaudio/best',
         'outtmpl': '/tmp/%(title)s.%(ext)s',  
         'postprocessors': [{
@@ -28,42 +29,62 @@ def download_audio(url_or_search):
             'preferredquality': '192',
         }],
         'quiet': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'uk-UA,uk;q=0.9,en-US;q=0.8',
+        'ignoreerrors': False
+    }
+
+    # Налаштування 2: Резервна спроба через YouTube (мобільний клієнт iOS обходить капчу)
+    ydl_opts_yt = {
+        'format': 'bestaudio/best',
+        'outtmpl': '/tmp/%(title)s.%(ext)s',  
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'quiet': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios'],
+                'player_skip': ['webpage', 'configs']
+            }
         }
     }
     
-    # Витягуємо чистий текст назви треку з URL Shazam
-    if "shazam.com" in url_or_search:
-        clean_url = url_or_search.split('?')
-        match = re.search(r'/track/\d+/([^/]+)', clean_url[0])
-        if match:
-            # Перетворюємо фрагмент посилання "color-your-night" на слова "color your night"
-            keywords = match.group(1).replace('-', ' ')
-            # Використовуємо DuckDuckGo відео-пошук для повного обходу блокувань YouTube
-            url_to_download = f"ddgsearch1:{keywords} audio"
-        else:
-            raise Exception("Не вдалося розпізнати назву пісні з структури посилання.")
+    # Вирізаємо чисті слова з посилання Shazam
+    clean_url = url_string.split('?')
+    match = re.search(r'/track/\d+/([^/]+)', clean_url[0])
+    if match:
+        keywords = match.group(1).replace('-', ' ')
     else:
-        url_to_download = url_or_search
+        keywords = url_string
 
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url_to_download, download=True)
-        if 'entries' in info:
-            if info['entries']:
-                info = info['entries'][0]
-            else:
-                raise Exception("Нічого не знайдено за назвою треку у вільних джерелах.")
+    # КРОК 1: Пробуємо знайти на SoundCloud
+    try:
+        search_query = f"scsearch1:{keywords}"
+        with YoutubeDL(ydl_opts_sc) as ydl:
+            info = ydl.extract_info(search_query, download=True)
+            if 'entries' in info and info['entries']:
+                entry = info['entries'][0]
+                filename = ydl.prepare_filename(entry)
+                return os.path.splitext(filename)[0] + '.mp3'
+    except Exception as e:
+        # Якщо SoundCloud видав DRM або ліцензійну помилку — переходимо до КРОКУ 2
+        print(f"SoundCloud DRM/Error: {e}. Переключаюсь на YouTube...")
         
-        filename = ydl.prepare_filename(info)
-        mp3_filename = os.path.splitext(filename)[0] + '.mp3'
-        return mp3_filename
+    # КРОК 2: Резервний пошук на YouTube через iOS-клієнт
+    search_query = f"ytsearch1:{keywords} audio"
+    with YoutubeDL(ydl_opts_yt) as ydl:
+        info = ydl.extract_info(search_query, download=True)
+        if 'entries' in info and info['entries']:
+            entry = info['entries'][0]
+            filename = ydl.prepare_filename(entry)
+            return os.path.splitext(filename)[0] + '.mp3'
+        else:
+            raise Exception("Не вдалося знайти трек в жодному безкоштовному джерелі.")
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привіт! Надішли мені посилання на трек із Shazam, і я завантажу його для тебе як MP3!")
+    bot.reply_to(message, "Привіт! Скинь мені посилання на Shazam, і я завантажу його для тебе як MP3!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_link(message):
@@ -71,9 +92,9 @@ def handle_link(message):
     urls = re.findall(r'(https?://\S+)', text)
     
     if urls:
-        # Критичне фіксування: беремо перший елемент списку як чистий рядок (String)
-        clean_url = urls[0]
-        status_message = bot.reply_to(message, "🔍 Обходжу блоки, шукаю та нарізаю твій трек...")
+        # КРИТИЧНЕ ВИПРАВЛЕННЯ: Беремо перший елемент списку як чистий ТЕКСТОВИЙ РЯДОК [0]
+        clean_url = urls[0] 
+        status_message = bot.reply_to(message, "🔍 Обходжу блоки, шукаю твій трек...")
         try:
             file_path = download_audio(clean_url)
             
@@ -83,14 +104,14 @@ def handle_link(message):
                 bot.delete_message(message.chat.id, status_message.message_id)
                 os.remove(file_path)
             else:
-                raise Exception("Помилка генерації MP3 файлу на сервері.")
+                raise Exception("Помилка фіналізації MP3 на сервері.")
                 
         except Exception as e:
             bot.edit_message_text(f"❌ Помилка завантаження: {str(e)}", message.chat.id, status_message.message_id)
     else:
-        bot.reply_to(message, "Будь ласка, надішли мені повідомлення з коректним інтернет-посиланням.")
+        bot.reply_to(message, "Будь ласка, надішли мені повідомлення з коректним інтернет-посилання.")
 
 if __name__ == '__main__':
     Thread(target=run_web).start()
-    print("Бот успішно запущений в обхідному режимі DuckDuckGo...")
+    print("Бот успішно запущений у дворежимному обході...")
     bot.infinity_polling()
