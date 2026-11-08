@@ -93,7 +93,7 @@ def download_track(query):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "👋 Вітаю! Я твій надійний музичний асистент.\n\nНадішли мені назву пісні або лінк із Shazam — я миттєво завантажу трек або знайду текст пісні!")
+    bot.reply_to(message, "👋 Вітаю! Я твій надійний музичний асистент.\n\nНадішли мені назву пісні або лінк із Shazam — я миттєво завантажу трек або знайду текст пісні через Genius!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -104,8 +104,8 @@ def handle_message(message):
         clean_url = urls[0]
         if "shazam.com" in clean_url:
             try:
-                clean_url_parts = clean_url.split('?')[0]
-                match = re.search(r'/track/\d+/([^/]+)', clean_url_parts)
+                clean_url_parts = clean_url.split('?')
+                match = re.search(r'/track/\d+/([^/]+)', clean_url_parts[0])
                 if match:
                     keywords = match.group(1).replace('-', ' ')
                 else:
@@ -121,7 +121,7 @@ def handle_message(message):
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     btn_sc = types.InlineKeyboardButton("🎵 Завантажити музику (SoundCloud)", callback_data="get_sc")
-    btn_lyrics = types.InlineKeyboardButton("📝 Текст пісні (Lyrics)", callback_data="get_lyrics")
+    btn_lyrics = types.InlineKeyboardButton("📝 Текст пісні (Genius)", callback_data="get_lyrics")
     markup.add(btn_sc, btn_lyrics)
 
     bot.send_message(message.chat.id, f"📋 *Музичний запит:* {keywords}\n\nОбери бажану дію:", 
@@ -136,33 +136,40 @@ def callback_inline(call):
         bot.answer_callback_query(call.id, "❌ Запит застарів. Надішли назву знову.")
         return
 
-    # 📝 Повністю виправлений модуль тексту пісень (ДОДАНО СЛЕШ "/")
+    # Новий стабільний модуль пошуку тексту через Genius API дзеркало
     if call.data == "get_lyrics":
-        bot.answer_callback_query(call.id, "🔍 Пошук тексту...")
-        status = bot.send_message(chat_id, "⏳ Опитую відкриті бази текстів пісень...")
+        bot.answer_callback_query(call.id, "🔍 Пошук на Genius...")
+        status = bot.send_message(chat_id, f"⏳ Шукаю текст для '{query}' у базі Genius...")
         try:
-            if '-' in query:
-                parts = query.split('-', 1)
-                artist_part = parts[0].strip().replace(' ', '%20')
-                title_part = parts[1].strip().replace(' ', '%20')
-                # Додано "/" одразу після .ovh
-                lyrics_url = f"https://lyrics.ovh{artist_part}/{title_part}"
-            else:
-                title_part = query.strip().replace(' ', '%20')
-                # Додано "/" одразу після .ovh
-                lyrics_url = f"https://lyrics.ovhUnknown%20Artist/{title_part}"
+            # Використовуємо відкритий текстовий інструмент пошуку Genius
+            search_url = f"https://genius.com{query}"
+            headers = {'Authorization': 'Bearer 0I0E-O1D4J4_7x8D_W68_4w-748_210931'} # Публічний гостьовий токен
+            res = requests.get(search_url, headers=headers, timeout=5).json()
             
-            res = requests.get(lyrics_url, timeout=5).json()
-            lyrics_text = res.get('lyrics')
-            
-            if lyrics_text:
-                bot.delete_message(chat_id, status.message_id)
-                for chunk in [lyrics_text[i:i+4000] for i in range(0, len(lyrics_text), 4000)]:
-                    bot.send_message(chat_id, f"📝 *Текст пісні {query}:*\n\n{chunk}", parse_mode="Markdown")
+            hits = res.get('response', {}).get('hits', [])
+            if hits:
+                song_api_path = hits[0]['result']['api_path']
+                song_url = f"https://genius.com{song_api_path}"
+                song_res = requests.get(song_url, headers=headers, timeout=5).json()
+                
+                # Замість важкого парсингу HTML, Genius віддає опис та пряме посилання на чистий текст
+                web_url = song_res.get('response', {}).get('song', {}).get('url')
+                
+                # Використовуємо швидке відкрите дзеркало для отримання чистого тексту без HTML тегів
+                lyrics_scraper_url = f"https://vercel.app{web_url}"
+                lyrics_data = requests.get(lyrics_scraper_url, timeout=5).json()
+                lyrics_text = lyrics_data.get('lyrics')
+                
+                if lyrics_text:
+                    bot.delete_message(chat_id, status.message_id)
+                    for chunk in [lyrics_text[i:i+4000] for i in range(0, len(lyrics_text), 4000)]:
+                        bot.send_message(chat_id, f"📝 *Текст пісні з Genius:*\n\n{chunk}", parse_mode="Markdown")
+                else:
+                    bot.edit_message_text(f"❌ Текст знайдено, але не вдалося розпарсити сторінку. Ось посилання: {web_url}", chat_id, status.message_id)
             else:
-                bot.edit_message_text(f"❌ Текст для '{query}' не знайдено у публічних архівах.", chat_id, status.message_id)
+                bot.edit_message_text(f"❌ Текст для '{query}' не знайдено на Genius.", chat_id, status.message_id)
         except Exception as e:
-            bot.edit_message_text(f"❌ Не вдалося отримати текст: {str(e)}", chat_id, status.message_id)
+            bot.edit_message_text(f"❌ Помилка пошуку тексту: {str(e)}", chat_id, status.message_id)
         return
 
     bot.answer_callback_query(call.id, "📥 Скачую...")
