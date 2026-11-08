@@ -1,6 +1,7 @@
 import os
 import re
 import telebot
+from telebot import types
 from yt_dlp import YoutubeDL
 from threading import Thread
 from flask import Flask
@@ -9,7 +10,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Мульти-пошукова музична система активна!"
+    return "Мультизадачний медіа-бот онлайн!"
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -18,9 +19,12 @@ def run_web():
 BOT_TOKEN = '9019116927:AAGKjHLRDNEp-BpmZaUqfF1pIBTiBsL3YyI'
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
-def download_audio(keywords):
-    # Джерело 1: Вільно завантажуваний SoundCloud
-    ydl_opts_sc = {
+# Тимчасове збереження пошукових запитів користувачів
+user_requests = {}
+
+def download_track(query, source_type):
+    # Динамічне налаштування залежно від вибору користувача
+    ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': '/tmp/%(title)s.%(ext)s',  
         'postprocessors': [{
@@ -30,115 +34,93 @@ def download_audio(keywords):
         }],
         'quiet': True
     }
+    
+    if source_type == "sc":
+        target = f"scsearch1:{query}"
+    elif source_type == "yt_tv":
+        target = f"ytsearch1:{query} lyrics"
+        ydl_opts['extractor_args'] = {'youtube': {'player_client': ['tvembedded'], 'player_skip': ['webpage', 'configs']}}
+    else:
+        target = f"ytsearch1:{query} audio"
+        ydl_opts['extractor_args'] = {'youtube': {'player_client': ['android_music'], 'player_skip': ['webpage', 'configs']}}
 
-    # Джерело 2: Мобільний API YouTube Music (імітація офіційного додатка)
-    ydl_opts_yt_music = {
-        'format': 'bestaudio/best',
-        'outtmpl': '/tmp/%(title)s.%(ext)s',  
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'quiet': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android_music'],
-                'player_skip': ['webpage', 'configs']
-            }
-        }
-    }
-
-    # Джерело 3: Smart TV Інфраструктура (YouTube для телевізорів ніколи не просить капчу)
-    ydl_opts_tv = {
-        'format': 'bestaudio/best',
-        'outtmpl': '/tmp/%(title)s.%(ext)s',  
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'quiet': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tvembedded'],
-                'player_skip': ['webpage', 'configs']
-            }
-        }
-    }
-
-    # Почерговий каскадний пошук
-    # 1. Пробуємо завантажити вільну копію з SoundCloud
-    try:
-        print(f"Спроба 1: Пошук '{keywords}' на SoundCloud...")
-        with YoutubeDL(ydl_opts_sc) as ydl:
-            info = ydl.extract_info(f"scsearch1:{keywords}", download=True)
-            if 'entries' in info and info['entries']:
-                filename = ydl.prepare_filename(info['entries'][0])
-                return os.path.splitext(filename)[0] + '.mp3'
-    except Exception as e:
-        print(f"SoundCloud недоступний або DRM: {e}")
-
-    # 2. Переключаємось на YouTube Music через мобільний додаток
-    try:
-        print(f"Спроба 2: Пошук '{keywords}' через YouTube Music API...")
-        with YoutubeDL(ydl_opts_yt_music) as ydl:
-            info = ydl.extract_info(f"ytsearch1:{keywords} audio", download=True)
-            if 'entries' in info and info['entries']:
-                filename = ydl.prepare_filename(info['entries'][0])
-                return os.path.splitext(filename)[0] + '.mp3'
-    except Exception as e:
-        print(f"YouTube Music заблоковано: {e}")
-
-    # 3. Фінальний пробій блокувань через Smart TV клієнт
-    print(f"Спроба 3: Запуск фінального Smart TV обходу для '{keywords}'...")
-    with YoutubeDL(ydl_opts_tv) as ydl:
-        info = ydl.extract_info(f"ytsearch1:{keywords} lyrics", download=True)
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(target, download=True)
         if 'entries' in info and info['entries']:
-            filename = ydl.prepare_filename(info['entries'][0])
-            return os.path.splitext(filename)[0] + '.mp3'
-        else:
-            raise Exception("Жодна музична база не змогла надати цей трек.")
+            info = info['entries'][0]
+        filename = ydl.prepare_filename(info)
+        return os.path.splitext(filename)[0] + '.mp3'
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привіт! Надішли мені лінк на Shazam, і мій інтелектуальний мульти-пошук знайде цей трек!")
+    bot.reply_to(message, "👋 Привіт! Я твій гнучкий музичний асистент.\n\nНадішли мені назву пісні або посилання на Shazam, і ти зможеш сам обрати параметри завантаження!")
 
 @bot.message_handler(func=lambda message: True)
-def handle_link(message):
+def handle_message(message):
     text = message.text
     urls = re.findall(r'(https?://\S+)', text)
     
+    # Визначаємо ключові слова для пошуку
     if urls:
-        # СУВОРЕ ВИПРАВЛЕННЯ: Беремо перший елемент списку як ТЕКСТОВИЙ РЯДОК (String)
-        raw_url = urls[0] 
-        status_message = bot.reply_to(message, "🔍 Працює мультиплатформенна ротація. Шукаю трек...")
-        
-        try:
-            # Витягуємо чисту назву треку з тексту URL
-            clean_url = raw_url.split('?')
-            match = re.search(r'/track/\d+/([^/]+)', clean_url[0])
-            if match:
-                keywords = match.group(1).replace('-', ' ')
-            else:
-                keywords = raw_url
-
-            file_path = download_audio(keywords)
-            
-            if os.path.exists(file_path):
-                with open(file_path, 'rb') as audio:
-                    bot.send_audio(message.chat.id, audio)
-                bot.delete_message(message.chat.id, status_message.message_id)
-                os.remove(file_path)
-            else:
-                raise Exception("Помилка фіналізації MP3 на хмарному сервері.")
-                
-        except Exception as e:
-            bot.edit_message_text(f"❌ Помилка завантаження: {str(e)}", message.chat.id, status_message.message_id)
+        clean_url = urls[0]  # Виправлено: беремо суто ПЕРШИЙ рядок тексту зі списку
+        match = re.search(r'/track/\d+/([^/]+)', clean_url.split('?')[0])
+        if match:
+            keywords = match.group(1).replace('-', ' ')
+        else:
+            keywords = clean_url
     else:
-        bot.reply_to(message, "Будь ласка, надішли мені коректне інтернет-посилання.")
+        keywords = text
+
+    # Зберігаємо запит користувача
+    user_requests[message.chat.id] = keywords
+
+    # Створюємо інтерактивне меню з інлайн-кнопками
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    btn_sc = types.InlineKeyboardButton("🎵 Завантажити з SoundCloud (Без капчі)", callback_data="get_sc")
+    btn_ytm = types.InlineKeyboardButton("📱 Завантажити з YouTube Music (Мобільний)", callback_data="get_ytm")
+    btn_tv = types.InlineKeyboardButton("📺 Завантажити через TV-Bypass (Супер-обхід)", callback_data="get_tv")
+    btn_lyrics = types.InlineKeyboardButton("📝 Знайти текст пісні (Скоро)", callback_data="get_lyrics")
+    
+    markup.add(btn_sc, btn_ytm, btn_tv, btn_lyrics)
+
+    bot.send_message(message.chat.id, f"🔍 Я розпізнав трек: *{keywords}*\nОбери дію або джерело завантаження:", 
+                     parse_mode="Markdown", reply_markup=markup)
+
+# Обробник натискання кнопок
+@types.callback_query_handler(func=lambda call: True)
+def callback_inline(call):
+    chat_id = call.message.chat.id
+    query = user_requests.get(chat_id)
+
+    if not query:
+        bot.answer_callback_query(call.id, "❌ Запит застарів. Надішли посилання або назву знову.")
+        return
+
+    if call.data == "get_lyrics":
+        bot.answer_callback_query(call.id, "Функція розробляється!")
+        bot.send_message(chat_id, f"📖 Шукаю текст для *{query}*... Наразі модуль Lyrics підключається.")
+        return
+
+    # Мапа вибору джерел
+    source_map = {"get_sc": "sc", "get_ytm": "yt_music", "get_tv": "yt_tv"}
+    source_type = source_map.get(call.data)
+
+    bot.answer_callback_query(call.id, "⏳ Починаю обробку запиту...")
+    status_message = bot.send_message(chat_id, "📥 Завантажую аудіопотік за обраним сценаріем...")
+
+    try:
+        file_path = download_track(query, source_type)
+        if os.path.exists(file_path):
+            with open(file_path, 'rb') as audio:
+                bot.send_audio(chat_id, audio)
+            bot.delete_message(chat_id, status_message.message_id)
+            os.remove(file_path)
+        else:
+            raise Exception("Файл не збережено.")
+    except Exception as e:
+        bot.edit_message_text(f"❌ Помилка цього сценарію: {str(e)}\nСпробуй іншу кнопку вище!", chat_id, status_message.message_id)
 
 if __name__ == '__main__':
     Thread(target=run_web).start()
-    print("Мульти-бот успішно активовано...")
+    print("Мультизадачний бот активовано...")
     bot.infinity_polling()
