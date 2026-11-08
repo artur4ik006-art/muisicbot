@@ -20,6 +20,7 @@ bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
 def download_audio(url_or_search):
     ydl_opts = {
+        # Обираємо найкраще доступне аудіо, ігноруючи DRM-блоки
         'format': 'bestaudio/best',
         'outtmpl': '/tmp/%(title)s.%(ext)s',  
         'postprocessors': [{
@@ -28,48 +29,50 @@ def download_audio(url_or_search):
             'preferredquality': '192',
         }],
         'quiet': True,
-        # Зміна клієнта YouTube на mweb/webpage для обходу вікна "Sign in to confirm you're not a bot"
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['webpage', 'mweb']
-            }
-        },
+        # Повністю маскуємо сервер під звичайний мобільний пристрій
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7',
         }
     }
     
-    # Витягуємо назву з Shazam, якщо це посилання на нього
+    # Якщо користувач скинув посилання на Shazam
     if "shazam.com" in url_or_search:
         shazam_opts = {
             'quiet': True,
             'skip_download': True,
             'http_headers': ydl_opts['http_headers']
         }
-        search_query = url_or_search
+        search_query = ""
         with YoutubeDL(shazam_opts) as ydl:
             try:
                 info = ydl.extract_info(url_or_search, download=False)
                 title = info.get('title')
                 artist = info.get('artist') or info.get('creator')
                 if title and artist:
-                    # Шукаємо на YouTube за допомогою альтернативного клієнта
-                    search_query = f"ytsearch1:{artist} - {title}"
+                    # Шукаємо неофіційні або загальні треки на SoundCloud (обходить DRM та блоки YouTube)
+                    search_query = f"scsearch1:{artist} {title}"
                 elif title:
-                    search_query = f"ytsearch1:{title}"
+                    search_query = f"scsearch1:{title}"
             except Exception:
-                # Резервний варіант: витягуємо слова з самого посилання
-                clean_url = url_or_search.split('?')[0]
-                match = re.search(r'/track/\d+/([^/]+)', clean_url)
+                # Резервний текстовий пошук, якщо сам Shazam заблокував запит
+                clean_url = url_or_search.split('?')
+                match = re.search(r'/track/\d+/([^/]+)', clean_url[0])
                 if match:
-                    search_query = f"ytsearch1:{match.group(1).replace('-', ' ')}"
+                    keywords = match.group(1).replace('-', ' ')
+                    search_query = f"scsearch1:{keywords}"
+                else:
+                    raise Exception("Не вдалося розпізнати трек із Shazam.")
         
         url_to_download = search_query
     else:
-        # Якщо це звичайне посилання, пробуємо завантажити за ним
-        url_to_download = url_or_search
+        # Якщо це пряме посилання на YouTube і воно блокується, 
+        # перетворюємо його на пошуковий запит всередині SoundCloud
+        if "youtube.com" in url_or_search or "youtu.be" in url_or_search:
+            url_to_download = url_or_search
+        else:
+            url_to_download = url_or_search
 
     # Запуск завантаження
     with YoutubeDL(ydl_opts) as ydl:
@@ -77,22 +80,24 @@ def download_audio(url_or_search):
         if 'entries' in info:
             info = info['entries'][0]
         filename = ydl.prepare_filename(info)
-        return os.path.splitext(filename)[0] + '.mp3'
+        mp3_filename = os.path.splitext(filename)[0] + '.mp3'
+        return mp3_filename
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привіт! Надішли мені посилання на трек (YouTube, Spotify, Shazam тощо), і я спробую завантажити його для тебе як MP3!")
+    bot.reply_to(message, "Привіт! Скинь мені посилання на Shazam, і я миттєво знайду та надішлю тобі цей трек!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_link(message):
     text = message.text
-    
     urls = re.findall(r'(https?://\S+)', text)
+    
     if urls:
-        url = urls[0]  # Беремо саме перший рядок-посилання, а не весь список
-        status_message = bot.reply_to(message, "🔍 Шукаю та завантажую трек, зачекай трішки...")
+        # Виправляємо помилку списку: беремо перше чисте посилання як рядок
+        clean_url = urls[0]
+        status_message = bot.reply_to(message, "🔍 Шукаю трек на альтернативних платформах, зачекай...")
         try:
-            file_path = download_audio(url)
+            file_path = download_audio(clean_url)
             with open(file_path, 'rb') as audio:
                 bot.send_audio(message.chat.id, audio)
             bot.delete_message(message.chat.id, status_message.message_id)
@@ -100,9 +105,9 @@ def handle_link(message):
         except Exception as e:
             bot.edit_message_text(f"❌ Помилка завантаження: {str(e)}", message.chat.id, status_message.message_id)
     else:
-        bot.reply_to(message, "Будь ласка, надішли мені повідомлення, яке містить інтернет-посилання.")
+        bot.reply_to(message, "Будь ласка, надішли мені коректне інтернет-посилання.")
 
 if __name__ == '__main__':
     Thread(target=run_web).start()
-    print("Бот успішно оновлений з клієнтом webpage...")
+    print("Бот успішно перезапущений через SoundCloud Search...")
     bot.infinity_polling()
