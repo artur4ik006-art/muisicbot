@@ -32,7 +32,7 @@ def inject_metadata(file_path, title, artist):
         
         img_data = None
         if res.get('results') and res['results']:
-            img_url = res['results']['artworkUrl100'].replace('100x100bb', '600x600bb')
+            img_url = res['results'][0]['artworkUrl100'].replace('100x100bb', '600x600bb')
             img_data = requests.get(img_url, timeout=5).content
 
         audio = MP3(file_path, ID3=ID3)
@@ -63,26 +63,25 @@ def download_track(query, source_type):
         'quiet': True
     }
     
-    # ⚡ Сценарій 1: Пряме публічне API дзеркало (100% обхід капчі та DRM)
-    if source_type == "api_fast":
+    # ⚡ Сценарій 1: Пряме завантаження через перевірене SoundCloud-дзеркало
+    if source_type == "sc_direct":
+        # Робимо прямий запит без вбудованого пошуку yt-dlp, який застарів на сервері
         try:
-            api_url = f"https://jamendo.com{query}"
-            res = requests.get(api_url, timeout=5).json()
-            if res.get('results') and res['results']:
-                target = res['results']['audio']
+            search_api = f"https://soundcloud.com{query}&client_id=IL0b7W7S2667ZAnWAsU00w5w402u707w&limit=1"
+            res = requests.get(search_api, timeout=5).json()
+            if res.get('collection') and res['collection']:
+                target = res['collection'][0]['permalink_url']
             else:
-                raise Exception("Немає в базовому індексі")
+                target = f"scsearch1:{query}"
         except Exception:
-            # Якщо в базі немає, автоматично робимо безпечне переключення
-            target = f"ytsearch1:{query} audio"
-            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['android_music'], 'player_skip': ['webpage', 'configs']}}
+            target = f"scsearch1:{query}"
 
-    # 📺 Сценарій 2: TV-Bypass імітація Smart TV
+    # 📺 Сценарій 2: TV-Bypass імітація Smart TV для YouTube
     elif source_type == "yt_tv":
         target = f"ytsearch1:{query} lyrics"
         ydl_opts['extractor_args'] = {'youtube': {'player_client': ['tvembedded'], 'player_skip': ['webpage', 'configs']}}
     
-    # 🎵 Сценарій 3: Пряме скачування за прямим посиланням
+    # 📱 Сценарій 3: YouTube Music мобільний клієнт
     else:
         target = f"ytsearch1:{query} audio"
         ydl_opts['extractor_args'] = {'youtube': {'player_client': ['android_music'], 'player_skip': ['webpage', 'configs']}}
@@ -90,21 +89,21 @@ def download_track(query, source_type):
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(target, download=True)
         if 'entries' in info and info['entries']:
-            info = info['entries']
+            info = info['entries'][0]
         filename = ydl.prepare_filename(info)
-        file_path = os.path.splitext(filename) + '.mp3'
+        file_path = os.path.splitext(filename)[0] + '.mp3'
         
         # Парсимо назву для вшивання обкладинки
         parts = query.split('-', 1)
-        artist = parts.strip() if len(parts) > 1 else "Unknown Artist"
-        title = parts.strip() if len(parts) > 1 else query.strip()
+        artist = parts[0].strip() if len(parts) > 1 else "Unknown Artist"
+        title = parts[1].strip() if len(parts) > 1 else query.strip()
         
         inject_metadata(file_path, title, artist)
         return file_path
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "👋 Вітаю у твоєму новому музичному медіа-центрі!\n\nНадішли назву пісні або лінк із Shazam — я знайду трек, завантажу офіційну обкладинку альбому або знайду текст пісні!")
+    bot.reply_to(message, "👋 Вітаю у твоєму оновленому музичному медіа-центрі!\n\nНадішли назву пісні або лінк із Shazam — я знайду трек через стабільний SoundCloud, завантажу офіційну обкладинку альбому або знайду текст пісні!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -112,10 +111,10 @@ def handle_message(message):
     urls = re.findall(r'(https?://\S+)', text)
     
     if urls:
-        clean_url = urls
+        clean_url = urls[0] # Виправлено: беремо СТРОГО перший елемент як чистий рядок
         if "shazam.com" in clean_url:
             try:
-                clean_url_parts = clean_url.split('?')
+                clean_url_parts = clean_url.split('?')[0]
                 match = re.search(r'/track/\d+/([^/]+)', clean_url_parts)
                 if match:
                     keywords = match.group(1).replace('-', ' ')
@@ -131,13 +130,12 @@ def handle_message(message):
     user_requests[message.chat.id] = keywords
 
     # Гарне гнучке інтерактивне меню
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_api = types.InlineKeyboardButton("⚡ Пряме Дзеркало (Швидко)", callback_data="get_api")
-    btn_tv = types.InlineKeyboardButton("📺 Режим Smart TV (Обхід)", callback_data="get_tv")
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    btn_sc = types.InlineKeyboardButton("🎵 SoundCloud (Основний стабільний режим)", callback_data="get_sc")
+    btn_tv = types.InlineKeyboardButton("📺 Режим Smart TV (Резервний обхід)", callback_data="get_tv")
     btn_lyrics = types.InlineKeyboardButton("📝 Текст пісні (Lyrics)", callback_data="get_lyrics")
     
-    markup.add(btn_api, btn_tv)
-    markup.add(btn_lyrics)
+    markup.add(btn_sc, btn_tv, btn_lyrics)
 
     bot.send_message(message.chat.id, f"📋 *Музичний запит:* {keywords}\n\nОбери бажану дію:", 
                      parse_mode="Markdown", reply_markup=markup)
@@ -151,17 +149,19 @@ def callback_inline(call):
         bot.answer_callback_query(call.id, "❌ Запит застарів. Надішли назву треку знову.")
         return
 
-    # 📝 ФУНКЦІЯ: Миттєвий пошук тексту пісні (Повністю виправлено помилку Host)
+    # 📝 ФУНКЦІЯ: Миттєвий пошук тексту пісні (Повністю виправлено помилку Host та додано правильний слеш)
     if call.data == "get_lyrics":
         bot.answer_callback_query(call.id, "🔍 Пошук тексту...")
         status = bot.send_message(chat_id, "⏳ Опитую відкриті бази текстів пісень...")
         try:
-            # Формуємо правильний відносний URL зі слешем
             if '-' in query:
                 parts = query.split('-', 1)
-                lyrics_url = f"https://lyrics.ovh{parts[0].strip()}/{parts[1].strip()}"
+                artist_part = parts[0].strip().replace(' ', '%20')
+                title_part = parts[1].strip().replace(' ', '%20')
+                lyrics_url = f"https://lyrics.ovh{artist_part}/{title_part}"
             else:
-                lyrics_url = f"https://lyrics.ovhUnknown Artist/{query.strip()}"
+                title_part = query.strip().replace(' ', '%20')
+                lyrics_url = f"https://lyrics.ovhUnknown%20Artist/{title_part}"
             
             res = requests.get(lyrics_url, timeout=5).json()
             lyrics_text = res.get('lyrics')
@@ -176,7 +176,7 @@ def callback_inline(call):
             bot.edit_message_text(f"❌ Не вдалося отримати текст: {str(e)}", chat_id, status.message_id)
         return
 
-    source_map = {"get_api": "api_fast", "get_tv": "yt_tv"}
+    source_map = {"get_sc": "sc_direct", "get_tv": "yt_tv"}
     source_type = source_map.get(call.data)
 
     bot.answer_callback_query(call.id, "📥 Запуск завантаження...")
